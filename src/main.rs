@@ -110,6 +110,8 @@ enum Commands {
 
     #[command(name = "delete", alias = "d")]
     Delete { id: usize },
+    // #[command(name = "projects", alias = "p")]
+    // Projects {},
 }
 
 fn main() {
@@ -180,13 +182,13 @@ fn main() {
                     filters.push(String::from("due: tomorrow"));
                 }
                 if week {
-                    filters.push(String::from("due: this week"));
+                    filters.push(String::from("due before: next week"));
                 }
                 if month {
-                    filters.push(String::from("due: this month"));
+                    filters.push(String::from("due before: next month"));
                 }
                 if year {
-                    filters.push(String::from("due: this year"));
+                    filters.push(String::from("due before: next year"));
                 }
                 if recurring {
                     filters.push(String::from("recurring"));
@@ -591,6 +593,8 @@ fn main() {
             // dbg!(&_body);
 
             println!("Task deleted successfully.");
-        }
+        } // Commands::Projects {} => {
+          //     todo!("Project listing not implemented yet.");
+          // }
     }
 }
