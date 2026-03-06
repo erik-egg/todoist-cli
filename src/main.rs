@@ -31,6 +31,9 @@ enum Commands {
         limit: Option<usize>,
     },
 
+    #[command(name = "projects", alias = "p")]
+    Projects {},
+
     #[command(name = "add", alias = "a")]
     Add {},
 
@@ -61,6 +64,10 @@ fn main() {
             name,
             limit,
         } => {}
+
+        Commands::Projects {} => {
+            todo!()
+        }
 
         Commands::Add {} => {
             todo!()
