@@ -16,8 +16,20 @@ enum Commands {
         token: String,
     },
 
-    #[command(name = "list", alias = "l")]
-    List {},
+    #[command(name = "list", alias = "l", alias = "get", alias = "g")]
+    List {
+        #[arg(short = 'P', long = "project")]
+        project: Option<String>,
+
+        #[arg(short = 'p', long = "parent")]
+        parent: Option<String>,
+
+        #[arg(short = 'n', long = "name")]
+        name: Option<String>,
+
+        #[arg(short = 'l', long = "limit")]
+        limit: Option<usize>,
+    },
 
     #[command(name = "add", alias = "a")]
     Add {},
@@ -42,7 +54,14 @@ fn main() {
                 println!("Successfully saved token.");
             }
         }
-        Commands::List {} => todo!(),
+
+        Commands::List {
+            project,
+            parent,
+            name,
+            limit,
+        } => {}
+
         Commands::Add {} => todo!(),
         Commands::Check {} => todo!(),
         Commands::Uncheck {} => todo!(),
