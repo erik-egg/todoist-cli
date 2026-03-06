@@ -249,41 +249,44 @@ fn main() {
                 Some(tasks) => tasks,
                 None => &FALLBACK_VEC,
             };
+
+            println!(
+                "{:<4}| {:<50} | {}",
+                "ID", "Content - Description", "Due Date"
+            );
+            println!("{}", "-".repeat(73));
+
             for task in tasks {
                 // output line construction
-                let mut line = String::new();
 
                 let content = task["content"].as_str().unwrap_or_default();
                 let description = task["description"].as_str().unwrap_or_default();
                 let task_due = task["due"]["date"].as_str().unwrap_or_else(|| &"none");
                 let is_recurring = task["due"]["is_recurring"].as_bool().unwrap_or(false);
 
-                if !content.is_empty() {
-                    line.push_str(content);
-                }
+                let mut content_description = content.to_owned();
 
                 if !description.is_empty() {
-                    line.push_str(" - ");
-                    line.push_str(description);
+                    if !content_description.is_empty() {
+                        content_description.push_str(" - ");
+                    }
+                    content_description.push_str(description);
                 }
 
-                line.push_str(&format!(" (due: {}", task_due));
+                let mut due_line = task_due.to_owned();
 
                 let due = chrono::NaiveDate::parse_from_str(task_due, "%Y-%m-%d")
                     .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2222, 1, 1).unwrap());
 
                 if due < today {
-                    line.push_str("⏰");
+                    due_line.push_str("⏰");
                 }
 
                 if is_recurring {
-                    line.push_str("🔁");
+                    due_line.push_str("🔁");
                 }
 
-                line.push_str(")");
-
-                let due = chrono::NaiveDate::parse_from_str(task_due, "%Y-%m-%d")
-                    .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2222, 1, 1).unwrap());
+                let line = format!("{:<50} | {:<12}", content_description, due_line);
 
                 ordered.push((
                     due,
@@ -293,8 +296,8 @@ fn main() {
             }
 
             ordered.sort_by_key(|k| k.0);
-            for (idx, (_, line, id)) in ordered.iter().enumerate() {
-                println!("{:<3}| {} | {}", idx, line, id);
+            for (idx, (_, line, _)) in ordered.iter().enumerate() {
+                println!("{:<4}| {}", idx, line);
             }
 
             let list = &ordered
@@ -362,13 +365,13 @@ fn main() {
                     query.append_pair("due_string", "tomorrow");
                 }
                 if week {
-                    query.append_pair("due_string", "this week");
+                    query.append_pair("due_string", "in 7 days");
                 }
                 if month {
-                    query.append_pair("due_string", "this month");
+                    query.append_pair("due_string", "in 1 month");
                 }
                 if year {
-                    query.append_pair("due_string", "this year");
+                    query.append_pair("due_string", "in 1 year");
                 }
             }
 
@@ -389,11 +392,7 @@ fn main() {
 
             let mut line = String::new();
 
-            if body["checked"].as_bool().unwrap_or(false) {
-                line.push_str("[x] ");
-            } else {
-                line.push_str("[ ] ");
-            }
+            line.push_str("0  | ");
 
             let content = body["content"].as_str().unwrap_or_default();
             let description = body["description"].as_str().unwrap_or_default();
@@ -418,6 +417,12 @@ fn main() {
             line.push_str(")");
 
             println!("{}", line);
+
+            utils::sync::save_list(
+                &vec![body["id"].as_str().unwrap_or_default().to_owned()],
+                "task_ids.txt",
+            )
+            .unwrap();
         }
 
         Commands::Check { id } => {
