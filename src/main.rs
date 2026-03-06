@@ -24,7 +24,7 @@ enum Commands {
 
     #[command(name = "list", alias = "l", alias = "get", alias = "g")]
     List {
-        #[arg(short = 'f', long = "filter", conflicts_with_all = &["search", "project", "due", "before", "after", "overdue", "today", "tomorrow"])]
+        #[arg(short = 'f', long = "filter", conflicts_with_all = &["search", "project", "due", "before", "after", "overdue", "today", "tomorrow", "week", "recurring"])]
         filter: Option<String>,
 
         #[arg(short = 'l', long = "limit")]
@@ -36,7 +36,7 @@ enum Commands {
         #[arg(short = 'p', long = "project")]
         project: Option<String>,
 
-        #[arg(short = 'd', long = "due")]
+        #[arg(short = 'd', long = "due", conflicts_with_all = &["today", "tomorrow", "week"])]
         due: Option<String>,
 
         #[arg(short = 'b', long = "before")]
