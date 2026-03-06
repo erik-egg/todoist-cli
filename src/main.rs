@@ -243,6 +243,9 @@ fn main() {
             // parse and print results
             let mut count = 1;
 
+            let today = chrono::Local::now().date_naive();
+
+            let mut ordered = Vec::new();
             let tasks = match body["results"].as_array() {
                 Some(tasks) => tasks,
                 None => &FALLBACK_VEC,
@@ -276,17 +279,32 @@ fn main() {
 
                 line.push_str(&format!(" (due: {}", task_due));
 
+                let due = chrono::NaiveDate::parse_from_str(task_due, "%Y-%m-%d")
+                    .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2222, 1, 1).unwrap());
+
+                if due < today {
+                    line.push_str("⏰");
+                }
+
                 if is_recurring {
-                    line.push_str(" 🔁");
+                    line.push_str("🔁");
                 }
 
                 line.push_str(")");
 
-                println!("{}", line);
+                let due = chrono::NaiveDate::parse_from_str(task_due, "%Y-%m-%d")
+                    .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2222, 1, 1).unwrap());
+
+                ordered.push((line, due));
 
                 if count > limit {
                     break;
                 }
+            }
+
+            ordered.sort_by_key(|k| k.1);
+            for (line, _) in ordered {
+                println!("{}", line);
             }
         }
 
