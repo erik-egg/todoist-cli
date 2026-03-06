@@ -1,11 +1,9 @@
 mod utils;
 
-use chrono::NaiveDate;
 use clap::{Parser, Subcommand};
 use reqwest::{Url, blocking::Client, header::HeaderMap};
 use serde_json::Value;
 
-const FALLBACK_NAIVE_DATE: Option<NaiveDate> = NaiveDate::from_ymd_opt(2222, 1, 1);
 const FALLBACK_VEC: Vec<Value> = Vec::new();
 
 #[derive(Parser, Debug)]
