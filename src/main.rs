@@ -1,10 +1,8 @@
 mod sync;
 
 use clap::{Parser, Subcommand};
-use reqwest::{Url, blocking::Client, header::HeaderMap};
+use reqwest::{Method, Url, blocking::Client, header::HeaderMap};
 use serde_json::Value;
-
-const FALLBACK_VEC: Vec<Value> = Vec::new();
 
 #[derive(Parser, Debug)]
 #[command(name = "todo", about = "A simple Todoist API application")]
@@ -112,6 +110,57 @@ enum Commands {
     // Projects {},
 }
 
+fn auth_headers() -> Result<HeaderMap, String> {
+    let token = sync::get_token()
+        .map_err(|e| format!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`"))?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert("Authorization", format!("Bearer {token}").parse().unwrap());
+
+    Ok(headers)
+}
+
+fn resolve_task_id(id: usize) -> Result<String, String> {
+    let list = sync::get_list("task_ids.txt").map_err(|e| {
+        format!("No task list found: {e}\nPlease run `todo list` first to generate the task list.")
+    })?;
+
+    list.get(id).cloned().ok_or_else(|| {
+        format!(
+            "Task ID not found in list: {id}\nPlease ensure you are using a valid task ID from the most recent `todo list` output."
+        )
+    })
+}
+
+fn update_task(id: usize, method: Method, action_path: &str, success_message: &str) {
+    let headers = match auth_headers() {
+        Ok(headers) => headers,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
+
+    let task_id = match resolve_task_id(id) {
+        Ok(task_id) => task_id,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
+
+    let api_link = format!("https://api.todoist.com/api/v1/tasks/{task_id}{action_path}");
+
+    let _body = Client::new()
+        .request(method, api_link)
+        .headers(headers)
+        .send()
+        .unwrap();
+
+    println!("{success_message}");
+}
+
+#[allow(clippy::too_many_lines)]
 fn main() {
     let args = Args::parse();
     match args.command {
@@ -140,35 +189,35 @@ fn main() {
             year,
             recurring,
         } => {
-            let token = match sync::get_token() {
-                Ok(token) => token,
-                Err(e) => {
-                    eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
+            let headers = match auth_headers() {
+                Ok(headers) => headers,
+                Err(error) => {
+                    eprintln!("{error}");
                     return;
                 }
             };
 
             // parse inputs
             let limit = limit.unwrap_or(50);
-            let filter = if filter.is_none() {
+            let filter = filter.or_else(|| {
                 let mut filters = Vec::new();
                 if let Some(search) = search {
-                    filters.push(format!("search: {}", search));
+                    filters.push(format!("search: {search}"));
                 }
                 if let Some(project) = project {
-                    filters.push(format!("##{}", project));
+                    filters.push(format!("##{project}"));
                 }
                 if let Some(due) = due {
-                    filters.push(format!("due: {}", due));
+                    filters.push(format!("due: {due}"));
                 }
                 if let Some(before) = before {
-                    filters.push(format!("due before: {}", before));
+                    filters.push(format!("due before: {before}"));
                 }
                 if let Some(after) = after {
-                    filters.push(format!("due after: {}", after));
+                    filters.push(format!("due after: {after}"));
                 }
                 if let Some(priority) = priority {
-                    filters.push(format!("p{}", priority));
+                    filters.push(format!("p{priority}"));
                 }
                 if overdue {
                     filters.push(String::from("overdue"));
@@ -191,23 +240,15 @@ fn main() {
                 if recurring {
                     filters.push(String::from("recurring"));
                 }
+
                 if filters.is_empty() {
                     None
                 } else {
                     Some(filters.join(" & "))
                 }
-            } else {
-                filter
-            };
+            });
 
             // dbg!(&filter);
-
-            // call API
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "Authorization",
-                format!("Bearer {}", token).parse().unwrap(),
-            );
 
             let api_link = if filter.is_none() {
                 // dbg!("no filter, using tasks endpoint");
@@ -235,7 +276,6 @@ fn main() {
                 .unwrap();
 
             // dbg!(&body);
-            println!("");
 
             if let Some(error) = body["error"].as_str() {
                 eprintln!("API Error: {error}");
@@ -243,17 +283,15 @@ fn main() {
             }
 
             let today = chrono::Local::now().date_naive();
+            let fallback_due = chrono::NaiveDate::from_ymd_opt(2222, 1, 1).unwrap();
 
             let mut ordered = Vec::new();
-            let tasks = match body["results"].as_array() {
-                Some(tasks) => tasks,
-                None => &FALLBACK_VEC,
-            };
+            let empty_tasks: &[Value] = &[];
+            let tasks = body["results"]
+                .as_array()
+                .map_or(empty_tasks, Vec::as_slice);
 
-            println!(
-                "{:<4}| {:<50} | {}",
-                "ID", "Content - Description", "Due Date"
-            );
+            println!("{:<4}| {:<50} | Due Date", "ID", "Content - Description");
             println!("{}", "-".repeat(73));
 
             for task in tasks {
@@ -261,7 +299,7 @@ fn main() {
 
                 let content = task["content"].as_str().unwrap_or_default();
                 let description = task["description"].as_str().unwrap_or_default();
-                let task_due = task["due"]["date"].as_str().unwrap_or_else(|| &"none");
+                let task_due = task["due"]["date"].as_str().unwrap_or("none");
                 let is_recurring = task["due"]["is_recurring"].as_bool().unwrap_or(false);
 
                 let mut content_description = content.to_owned();
@@ -275,18 +313,18 @@ fn main() {
 
                 let mut due_line = task_due.to_owned();
 
-                let due = chrono::NaiveDate::parse_from_str(task_due, "%Y-%m-%d")
-                    .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2222, 1, 1).unwrap());
+                let due =
+                    chrono::NaiveDate::parse_from_str(task_due, "%Y-%m-%d").unwrap_or(fallback_due);
 
                 if due < today {
-                    due_line.push_str("⏰");
+                    due_line.push('⏰');
                 }
 
                 if is_recurring {
-                    due_line.push_str("🔁");
+                    due_line.push('🔁');
                 }
 
-                let line = format!("{:<50} | {:<12}", content_description, due_line);
+                let line = format!("{content_description:<50} | {due_line:<12}");
 
                 ordered.push((
                     due,
@@ -297,15 +335,15 @@ fn main() {
 
             ordered.sort_by_key(|k| k.0);
             for (idx, (_, line, _)) in ordered.iter().enumerate() {
-                println!("{:<4}| {}", idx, line);
+                println!("{idx:<4}| {line}");
             }
 
-            let list = &ordered
+            let list = ordered
                 .into_iter()
                 .map(|(_, _, id)| id)
                 .collect::<Vec<String>>();
 
-            sync::save_list(list, "task_ids.txt").unwrap();
+            sync::save_list(&list, "task_ids.txt").unwrap();
         }
 
         Commands::Add {
@@ -320,10 +358,10 @@ fn main() {
             month,
             year,
         } => {
-            let token = match sync::get_token() {
-                Ok(token) => token,
-                Err(e) => {
-                    eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
+            let headers = match auth_headers() {
+                Ok(headers) => headers,
+                Err(error) => {
+                    eprintln!("{error}");
                     return;
                 }
             };
@@ -332,13 +370,6 @@ fn main() {
             if project.is_some() {
                 todo!("project support not implemented yet");
             }
-
-            // call API
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "Authorization",
-                format!("Bearer {}", token).parse().unwrap(),
-            );
 
             let api_link = "https://api.todoist.com/api/v1/tasks";
 
@@ -390,207 +421,36 @@ fn main() {
                 return;
             }
 
-            let mut line = String::new();
-
-            line.push_str("0  | ");
-
             let content = body["content"].as_str().unwrap_or_default();
             let description = body["description"].as_str().unwrap_or_default();
-            let task_due = body["due"]["date"].as_str().unwrap_or_else(|| &"none");
+            let task_due = body["due"]["date"].as_str().unwrap_or("none");
             let is_recurring = body["due"]["is_recurring"].as_bool().unwrap_or(false);
 
-            if !content.is_empty() {
-                line.push_str(content);
-            }
-
+            let mut content_description = content.to_owned();
             if !description.is_empty() {
-                line.push_str(" - ");
-                line.push_str(description);
+                if !content_description.is_empty() {
+                    content_description.push_str(" - ");
+                }
+                content_description.push_str(description);
             }
 
-            line.push_str(&format!(" (due: {}", task_due));
+            let recurring_marker = if is_recurring { " 🔁" } else { "" };
+            println!("0  | {content_description} (due: {task_due}{recurring_marker})");
 
-            if is_recurring {
-                line.push_str(" 🔁");
-            }
-
-            line.push_str(")");
-
-            println!("{}", line);
-
-            sync::save_list(
-                &vec![body["id"].as_str().unwrap_or_default().to_owned()],
-                "task_ids.txt",
-            )
-            .unwrap();
+            let list = vec![body["id"].as_str().unwrap_or_default().to_owned()];
+            sync::save_list(&list, "task_ids.txt").unwrap();
         }
 
         Commands::Check { id } => {
-            let token = match sync::get_token() {
-                Ok(token) => token,
-                Err(e) => {
-                    eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
-                    return;
-                }
-            };
-
-            // call API
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "Authorization",
-                format!("Bearer {}", token).parse().unwrap(),
-            );
-
-            let list = match sync::get_list("task_ids.txt") {
-                Ok(list) => list,
-                Err(e) => {
-                    eprintln!(
-                        "No task list found: {e}\nPlease run `todo list` first to generate the task list."
-                    );
-                    return;
-                }
-            };
-
-            // dbg!(&list);
-
-            let id = match list
-                .iter()
-                .enumerate()
-                .find(|(idx, _)| *idx == id)
-                .map(|(_, task_id)| task_id.to_owned())
-            {
-                Some(idx) => idx,
-                None => {
-                    eprintln!(
-                        "Task ID not found in list: {}\nPlease ensure you are using a valid task ID from the most recent `todo list` output.",
-                        id
-                    );
-                    return;
-                }
-            };
-
-            let api_link = format!("https://api.todoist.com/api/v1/tasks/{}/close", id);
-            // dbg!(&api_link);
-
-            let _body = Client::new()
-                .post(api_link)
-                .headers(headers)
-                .send()
-                .unwrap();
-
-            // dbg!(&_body);
-
-            println!("Task closed successfully.");
+            update_task(id, Method::POST, "/close", "Task closed successfully.");
         }
 
         Commands::Uncheck { id } => {
-            let token = match sync::get_token() {
-                Ok(token) => token,
-                Err(e) => {
-                    eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
-                    return;
-                }
-            };
-
-            // call API
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "Authorization",
-                format!("Bearer {}", token).parse().unwrap(),
-            );
-
-            let list = match sync::get_list("task_ids.txt") {
-                Ok(list) => list,
-                Err(e) => {
-                    eprintln!(
-                        "No task list found: {e}\nPlease run `todo list` first to generate the task list."
-                    );
-                    return;
-                }
-            };
-
-            let id = match list
-                .iter()
-                .enumerate()
-                .find(|(idx, _)| *idx == id)
-                .map(|(_, task_id)| task_id.to_owned())
-            {
-                Some(idx) => idx,
-                None => {
-                    eprintln!(
-                        "Task ID not found in list: {}\nPlease ensure you are using a valid task ID from the most recent `todo list` output.",
-                        id
-                    );
-                    return;
-                }
-            };
-
-            let api_link = format!("https://api.todoist.com/api/v1/tasks/{}/reopen", id);
-
-            let _body = Client::new()
-                .post(api_link)
-                .headers(headers)
-                .send()
-                .unwrap();
-
-            // dbg!(&_body);
-
-            println!("Task reopened successfully.");
+            update_task(id, Method::POST, "/reopen", "Task reopened successfully.");
         }
 
         Commands::Delete { id } => {
-            let token = match sync::get_token() {
-                Ok(token) => token,
-                Err(e) => {
-                    eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
-                    return;
-                }
-            };
-
-            // call API
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "Authorization",
-                format!("Bearer {}", token).parse().unwrap(),
-            );
-
-            let list = match sync::get_list("task_ids.txt") {
-                Ok(list) => list,
-                Err(e) => {
-                    eprintln!(
-                        "No task list found: {e}\nPlease run `todo list` first to generate the task list."
-                    );
-                    return;
-                }
-            };
-
-            let id = match list
-                .iter()
-                .enumerate()
-                .find(|(idx, _)| *idx == id)
-                .map(|(_, task_id)| task_id.to_owned())
-            {
-                Some(idx) => idx,
-                None => {
-                    eprintln!(
-                        "Task ID not found in list: {}\nPlease ensure you are using a valid task ID from the most recent `todo list` output.",
-                        id
-                    );
-                    return;
-                }
-            };
-
-            let api_link = format!("https://api.todoist.com/api/v1/tasks/{}", id);
-
-            let _body = Client::new()
-                .delete(api_link)
-                .headers(headers)
-                .send()
-                .unwrap();
-
-            // dbg!(&_body);
-
-            println!("Task deleted successfully.");
+            update_task(id, Method::DELETE, "", "Task deleted successfully.");
         } // Commands::Projects {} => {
           //     todo!("Project listing not implemented yet.");
           // }

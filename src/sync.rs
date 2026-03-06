@@ -20,7 +20,7 @@ pub fn save_token(token: &str) -> Result<()> {
 
     fs::create_dir_all(&parent)
         .with_context(|| format!("failed to create directory {}", parent.display()))?;
-    fs::write(&token_path, token)
+    fs::write(token_path, token)
         .with_context(|| format!("failed to write token file {}", token_path.display()))?;
 
     Ok(())
@@ -34,19 +34,14 @@ pub fn get_token() -> Result<String> {
     Ok(token.trim().to_owned())
 }
 
-pub fn save_list(list: &Vec<String>, file_name: &str) -> Result<()> {
+pub fn save_list(list: &[String], file_name: &str) -> Result<()> {
     let parent = todoist_file_path()?;
     let list_path = &parent.join(file_name);
 
-    let to_write = list
-        .iter()
-        .enumerate()
-        .map(|(_, task_id)| task_id.as_str())
-        .collect::<Vec<&str>>()
-        .join("\n");
+    let to_write = list.join("\n");
     fs::create_dir_all(&parent)
         .with_context(|| format!("failed to create directory {}", parent.display()))?;
-    fs::write(&list_path, to_write)
+    fs::write(list_path, to_write)
         .with_context(|| format!("failed to write list file {}", list_path.display()))?;
 
     Ok(())
@@ -57,10 +52,7 @@ pub fn get_list(file_name: &str) -> Result<Vec<String>> {
     let content = fs::read_to_string(&list_path)
         .with_context(|| format!("failed to read list file {}", list_path.display()))?;
 
-    let list = content
-        .lines()
-        .filter_map(|line| line.to_owned().into())
-        .collect::<Vec<String>>();
+    let list = content.lines().map(str::to_owned).collect::<Vec<String>>();
 
     Ok(list)
 }
