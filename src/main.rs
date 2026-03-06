@@ -34,7 +34,7 @@ enum Commands {
         #[arg(short = 'p', long = "project")]
         project: Option<String>,
 
-        #[arg(short = 'd', long = "due", conflicts_with_all = &["today", "tomorrow", "week"])]
+        #[arg(short = 'd', long = "due", conflicts_with_all = &["today", "tomorrow", "week", "month", "year"])]
         due: Option<String>,
 
         #[arg(short = 'b', long = "before")]
@@ -49,21 +49,56 @@ enum Commands {
         #[arg(short = 'o', long = "overdue")]
         overdue: bool,
 
-        #[arg(short = 't', long = "today")]
+        #[arg(short = 't', long = "today", conflicts_with_all = &["due", "tomorrow", "week", "month", "year"])]
         today: bool,
 
-        #[arg(short = '1', long = "tomorrow")]
+        #[arg(short = 'T', long = "tomorrow", conflicts_with_all = &["due", "today", "week", "month", "year"])]
         tomorrow: bool,
 
-        #[arg(short = 'w', long = "week")]
+        #[arg(short = 'w', long = "week", conflicts_with_all = &["due", "today", "tomorrow", "month", "year"])]
         week: bool,
+
+        #[arg(short = 'm', long = "month", conflicts_with_all = &["due", "today", "tomorrow", "week", "year"])]
+        month: bool,
+
+        #[arg(short = 'y', long = "year", conflicts_with_all = &["due", "today", "tomorrow", "week", "month"])]
+        year: bool,
 
         #[arg(short = 'r', long = "recurring")]
         recurring: bool,
     },
 
     #[command(name = "add", alias = "a")]
-    Add {},
+    Add {
+        content: String,
+
+        #[arg(short = 'p', long = "project")]
+        project: Option<String>,
+
+        #[arg(short = 'D', long = "description")]
+        description: Option<String>,
+
+        #[arg(short = 'd', long = "due", conflicts_with_all = &["today", "tomorrow", "week", "month", "year"])]
+        due: Option<String>,
+
+        #[arg(short = 'P', long = "priority")]
+        priority: Option<String>,
+
+        #[arg(short = 't', long = "today", conflicts_with_all = &["due", "tomorrow", "week", "month", "year"])]
+        today: bool,
+
+        #[arg(short = 'T', long = "tomorrow", conflicts_with_all = &["due", "today", "week", "month", "year"])]
+        tomorrow: bool,
+
+        #[arg(short = 'w', long = "week", conflicts_with_all = &["due", "today", "tomorrow", "month", "year"])]
+        week: bool,
+
+        #[arg(short = 'm', long = "month", conflicts_with_all = &["due", "today", "tomorrow", "week", "year"])]
+        month: bool,
+
+        #[arg(short = 'y', long = "year", conflicts_with_all = &["due", "today", "tomorrow", "week", "month"])]
+        year: bool,
+    },
 
     #[command(name = "check", alias = "c")]
     Check {},
@@ -99,6 +134,8 @@ fn main() {
             today,
             tomorrow,
             week,
+            month,
+            year,
             recurring,
         } => {
             let token = match utils::auth::get_token() {
@@ -142,6 +179,12 @@ fn main() {
                 }
                 if week {
                     filters.push(String::from("due: this week"));
+                }
+                if month {
+                    filters.push(String::from("due: this month"));
+                }
+                if year {
+                    filters.push(String::from("due: this year"));
                 }
                 if recurring {
                     filters.push(String::from("recurring"));
@@ -219,7 +262,7 @@ fn main() {
 
                 let content = task["content"].as_str().unwrap_or_default();
                 let description = task["description"].as_str().unwrap_or_default();
-                let task_due = task["due"]["date"].as_str().unwrap();
+                let task_due = task["due"]["date"].as_str().unwrap_or_else(|| &"none");
                 let is_recurring = task["due"]["is_recurring"].as_bool().unwrap_or(false);
 
                 if !content.is_empty() {
@@ -247,8 +290,119 @@ fn main() {
             }
         }
 
-        Commands::Add {} => {
-            todo!()
+        Commands::Add {
+            content,
+            project,
+            description,
+            due,
+            priority,
+            today,
+            tomorrow,
+            week,
+            month,
+            year,
+        } => {
+            let token = match utils::auth::get_token() {
+                Ok(token) => token,
+                Err(e) => {
+                    eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
+                    return;
+                }
+            };
+
+            // parse inputs
+            if project.is_some() {
+                todo!("project support not implemented yet");
+            }
+
+            // call API
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "Authorization",
+                format!("Bearer {}", token).parse().unwrap(),
+            );
+
+            let api_link = "https://api.todoist.com/api/v1/tasks";
+
+            let mut url = Url::parse(api_link).unwrap();
+            {
+                let mut query = url.query_pairs_mut();
+                query.append_pair("content", &content);
+                // if let Some(project) = project {
+                //     query.append_pair("project_id", &project);
+                // }
+                if let Some(description) = description {
+                    query.append_pair("description", &description);
+                }
+                if let Some(due) = due {
+                    query.append_pair("due_string", &due);
+                }
+                if let Some(priority) = priority {
+                    query.append_pair("priority", &priority);
+                }
+                if today {
+                    query.append_pair("due_string", "today");
+                }
+                if tomorrow {
+                    query.append_pair("due_string", "tomorrow");
+                }
+                if week {
+                    query.append_pair("due_string", "this week");
+                }
+                if month {
+                    query.append_pair("due_string", "this month");
+                }
+                if year {
+                    query.append_pair("due_string", "this year");
+                }
+            }
+
+            let body = Client::new()
+                .post(url)
+                .headers(headers)
+                .send()
+                .unwrap()
+                .json::<Value>()
+                .unwrap();
+
+            // dbg!(&body);
+
+            if let Some(error) = body["error"].as_str() {
+                eprintln!("API Error: {error}");
+                return;
+            }
+
+            let mut line = String::new();
+
+            if body["checked"].as_bool().unwrap_or(false) {
+                line.push_str("[x] ");
+            } else {
+                line.push_str("[ ] ");
+            }
+
+            let content = body["content"].as_str().unwrap_or_default();
+            let description = body["description"].as_str().unwrap_or_default();
+            let task_due = body["due"]["date"].as_str().unwrap_or_else(|| &"none");
+            let is_recurring = body["due"]["is_recurring"].as_bool().unwrap_or(false);
+
+            if !content.is_empty() {
+                line.push_str(content);
+            }
+
+            if !description.is_empty() {
+                line.push_str(" - ");
+                line.push_str(description);
+            }
+
+            line.push_str(&format!(" (due: {}", task_due));
+
+            if is_recurring {
+                line.push_str(" 🔁");
+            }
+
+            line.push_str(")");
+
+            println!("{}", line);
         }
 
         Commands::Check {} => {
