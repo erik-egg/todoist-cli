@@ -64,9 +64,6 @@ enum Commands {
         recurring: bool,
     },
 
-    #[command(name = "projects", alias = "p")]
-    Projects {},
-
     #[command(name = "add", alias = "a")]
     Add {},
 
