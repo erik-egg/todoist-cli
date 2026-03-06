@@ -249,10 +249,6 @@ fn main() {
             }
         }
 
-        Commands::Projects {} => {
-            todo!()
-        }
-
         Commands::Add {} => {
             todo!()
         }
