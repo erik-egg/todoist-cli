@@ -4,6 +4,8 @@ use clap::{Parser, Subcommand};
 use reqwest::{Url, blocking::Client, header::HeaderMap};
 use serde_json::Value;
 
+use crate::utils::sync;
+
 const FALLBACK_VEC: Vec<Value> = Vec::new();
 
 #[derive(Parser, Debug)]
@@ -241,7 +243,7 @@ fn main() {
             }
 
             // parse and print results
-            let mut count = 1;
+            let mut idx = 0;
 
             let today = chrono::Local::now().date_naive();
 
@@ -252,7 +254,7 @@ fn main() {
             };
             for task in tasks {
                 // limit filter
-                count += 1;
+                idx += 1;
 
                 // output line construction
                 let mut line = String::new();
@@ -295,17 +297,20 @@ fn main() {
                 let due = chrono::NaiveDate::parse_from_str(task_due, "%Y-%m-%d")
                     .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2222, 1, 1).unwrap());
 
-                ordered.push((line, due, task["id"].as_i64().unwrap_or(0)));
-
-                if count > limit {
-                    break;
-                }
+                ordered.push((due, line, task["id"].to_string().to_owned()));
             }
 
-            ordered.sort_by_key(|k| k.1);
-            for (idx, (line, _, id)) in ordered.iter().enumerate() {
-                println!("{}. {}", idx + 1, line);
+            ordered.sort_by_key(|k| k.0);
+            for (idx, (_, line, id)) in ordered.iter().enumerate() {
+                println!("{:<3}| {} | {}", idx, line, id);
             }
+
+            let list = &ordered
+                .into_iter()
+                .map(|(_, _, id)| id)
+                .collect::<Vec<String>>();
+
+            sync::save_list(list, "task_ids.txt").unwrap();
         }
 
         Commands::Add {
