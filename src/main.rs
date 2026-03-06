@@ -1,10 +1,8 @@
-mod utils;
+mod sync;
 
 use clap::{Parser, Subcommand};
 use reqwest::{Url, blocking::Client, header::HeaderMap};
 use serde_json::Value;
-
-use crate::utils::sync;
 
 const FALLBACK_VEC: Vec<Value> = Vec::new();
 
@@ -118,7 +116,7 @@ fn main() {
     let args = Args::parse();
     match args.command {
         Commands::Auth { token } => {
-            if let Err(e) = utils::sync::save_token(&token) {
+            if let Err(e) = sync::save_token(&token) {
                 eprintln!("Error saving token: {e}");
             } else {
                 println!("Successfully saved token.");
@@ -142,7 +140,7 @@ fn main() {
             year,
             recurring,
         } => {
-            let token = match utils::sync::get_token() {
+            let token = match sync::get_token() {
                 Ok(token) => token,
                 Err(e) => {
                     eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
@@ -322,7 +320,7 @@ fn main() {
             month,
             year,
         } => {
-            let token = match utils::sync::get_token() {
+            let token = match sync::get_token() {
                 Ok(token) => token,
                 Err(e) => {
                     eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
@@ -420,7 +418,7 @@ fn main() {
 
             println!("{}", line);
 
-            utils::sync::save_list(
+            sync::save_list(
                 &vec![body["id"].as_str().unwrap_or_default().to_owned()],
                 "task_ids.txt",
             )
@@ -428,7 +426,7 @@ fn main() {
         }
 
         Commands::Check { id } => {
-            let token = match utils::sync::get_token() {
+            let token = match sync::get_token() {
                 Ok(token) => token,
                 Err(e) => {
                     eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
@@ -443,7 +441,7 @@ fn main() {
                 format!("Bearer {}", token).parse().unwrap(),
             );
 
-            let list = match utils::sync::get_list("task_ids.txt") {
+            let list = match sync::get_list("task_ids.txt") {
                 Ok(list) => list,
                 Err(e) => {
                     eprintln!(
@@ -486,7 +484,7 @@ fn main() {
         }
 
         Commands::Uncheck { id } => {
-            let token = match utils::sync::get_token() {
+            let token = match sync::get_token() {
                 Ok(token) => token,
                 Err(e) => {
                     eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
@@ -501,7 +499,7 @@ fn main() {
                 format!("Bearer {}", token).parse().unwrap(),
             );
 
-            let list = match utils::sync::get_list("task_ids.txt") {
+            let list = match sync::get_list("task_ids.txt") {
                 Ok(list) => list,
                 Err(e) => {
                     eprintln!(
@@ -541,7 +539,7 @@ fn main() {
         }
 
         Commands::Delete { id } => {
-            let token = match utils::sync::get_token() {
+            let token = match sync::get_token() {
                 Ok(token) => token,
                 Err(e) => {
                     eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
@@ -556,7 +554,7 @@ fn main() {
                 format!("Bearer {}", token).parse().unwrap(),
             );
 
-            let list = match utils::sync::get_list("task_ids.txt") {
+            let list = match sync::get_list("task_ids.txt") {
                 Ok(list) => list,
                 Err(e) => {
                     eprintln!(
