@@ -114,7 +114,7 @@ fn main() {
     let args = Args::parse();
     match args.command {
         Commands::Auth { token } => {
-            if let Err(e) = utils::auth::save_token(&token) {
+            if let Err(e) = utils::sync::save_token(&token) {
                 eprintln!("Error saving token: {e}");
             } else {
                 println!("Successfully saved token.");
@@ -138,7 +138,7 @@ fn main() {
             year,
             recurring,
         } => {
-            let token = match utils::auth::get_token() {
+            let token = match utils::sync::get_token() {
                 Ok(token) => token,
                 Err(e) => {
                     eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
@@ -257,11 +257,11 @@ fn main() {
                 // output line construction
                 let mut line = String::new();
 
-                if task["checked"].as_bool().unwrap_or(false) {
-                    line.push_str("[x] ");
-                } else {
-                    line.push_str("[ ] ");
-                }
+                // if task["checked"].as_bool().unwrap_or(false) {
+                //     line.push_str("[x] ");
+                // } else {
+                //     line.push_str("[ ] ");
+                // }
 
                 let content = task["content"].as_str().unwrap_or_default();
                 let description = task["description"].as_str().unwrap_or_default();
@@ -295,7 +295,7 @@ fn main() {
                 let due = chrono::NaiveDate::parse_from_str(task_due, "%Y-%m-%d")
                     .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2222, 1, 1).unwrap());
 
-                ordered.push((line, due));
+                ordered.push((line, due, task["id"].as_i64().unwrap_or(0)));
 
                 if count > limit {
                     break;
@@ -303,8 +303,8 @@ fn main() {
             }
 
             ordered.sort_by_key(|k| k.1);
-            for (line, _) in ordered {
-                println!("{}", line);
+            for (idx, (line, _, id)) in ordered.iter().enumerate() {
+                println!("{}. {}", idx + 1, line);
             }
         }
 
@@ -320,7 +320,7 @@ fn main() {
             month,
             year,
         } => {
-            let token = match utils::auth::get_token() {
+            let token = match utils::sync::get_token() {
                 Ok(token) => token,
                 Err(e) => {
                     eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
