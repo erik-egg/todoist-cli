@@ -1,6 +1,7 @@
 mod utils;
 
 use clap::{Parser, Subcommand};
+use reqwest::header::HeaderMap;
 
 #[derive(Parser, Debug)]
 #[command(name = "todo", about = "A simple Todoist API application")]
@@ -18,17 +19,14 @@ enum Commands {
 
     #[command(name = "list", alias = "l", alias = "get", alias = "g")]
     List {
-        #[arg(short = 'P', long = "project")]
+        #[arg(short = 'p', long = "project")]
         project: Option<String>,
 
-        #[arg(short = 'p', long = "parent")]
-        parent: Option<String>,
-
-        #[arg(short = 'n', long = "name")]
-        name: Option<String>,
+        #[arg(short = 'f', long = "filter")]
+        filter: Option<String>,
 
         #[arg(short = 'l', long = "limit")]
-        limit: Option<usize>,
+        limit: Option<i32>,
     },
 
     #[command(name = "add", alias = "a")]
@@ -57,10 +55,47 @@ fn main() {
 
         Commands::List {
             project,
-            parent,
-            name,
+            filter,
             limit,
-        } => {}
+        } => {
+            let token = match utils::auth::get_token() {
+                Ok(token) => token,
+                Err(e) => {
+                    eprintln!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`");
+                    return;
+                }
+            };
+
+            let api_link = "https://api.todoist.com/api/v1/tasks";
+            let mut headers = HeaderMap::new();
+
+            headers.insert(
+                "Authorization",
+                format!("Bearer {}", token).parse().unwrap(),
+            );
+
+            if let Some(project) = project {
+                headers.insert("project_id", project.parse().unwrap());
+            }
+            if let Some(limit) = limit {
+                headers.insert("limit", limit.to_string().parse().unwrap());
+            }
+
+            let body = reqwest::blocking::Client::new()
+                .get(api_link)
+                .headers(headers)
+                .send()
+                .unwrap()
+                .json::<serde_json::Value>()
+                .unwrap();
+
+            for task in body["results"].as_array().unwrap() {
+                println!(
+                    "{}: {} - {} ",
+                    task["id"], task["content"], task["description"]
+                );
+            }
+        }
 
         Commands::Add {} => {
             todo!()
