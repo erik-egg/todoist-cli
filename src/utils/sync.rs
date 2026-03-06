@@ -41,8 +41,8 @@ pub fn save_list(list: &Vec<String>, file_name: &str) -> Result<()> {
     let to_write = list
         .iter()
         .enumerate()
-        .map(|(idx, task_id)| format!("{},{}", idx, task_id))
-        .collect::<Vec<String>>()
+        .map(|(_, task_id)| task_id.as_str())
+        .collect::<Vec<&str>>()
         .join("\n");
     fs::create_dir_all(&parent)
         .with_context(|| format!("failed to create directory {}", parent.display()))?;
@@ -59,7 +59,7 @@ pub fn get_list(file_name: &str) -> Result<Vec<String>> {
 
     let list = content
         .lines()
-        .filter_map(|line| line.split(',').nth(1).map(|id| id.to_owned()))
+        .filter_map(|line| line.to_owned().into())
         .collect::<Vec<String>>();
 
     Ok(list)
