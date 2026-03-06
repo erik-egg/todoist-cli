@@ -62,9 +62,20 @@ fn main() {
             limit,
         } => {}
 
-        Commands::Add {} => todo!(),
-        Commands::Check {} => todo!(),
-        Commands::Uncheck {} => todo!(),
-        Commands::Delete {} => todo!(),
+        Commands::Add {} => {
+            todo!()
+        }
+
+        Commands::Check {} => {
+            todo!()
+        }
+
+        Commands::Uncheck {} => {
+            todo!()
+        }
+
+        Commands::Delete {} => {
+            todo!()
+        }
     }
 }
