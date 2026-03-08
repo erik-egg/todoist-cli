@@ -217,7 +217,6 @@ fn update_task(id: usize, method: Method, action_path: &str, success_message: &s
     println!("{success_message}");
 }
 
-#[allow(clippy::too_many_lines)]
 fn main() {
     let args = Args::parse();
     match args.command {
