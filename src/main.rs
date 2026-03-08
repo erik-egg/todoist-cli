@@ -5,105 +5,162 @@ use reqwest::{Method, Url, blocking::Client, header::HeaderMap};
 use serde_json::Value;
 
 #[derive(Parser, Debug)]
-#[command(name = "todo", about = "A simple Todoist API application")]
+#[command(
+    name = "todo",
+    version,
+    about = "Manage Todoist tasks from the terminal",
+    long_about = "A Todoist CLI for listing, creating, and updating tasks.\n\
+IDs used by `check`, `uncheck`, and `delete` come from the most recent `todo list` output."
+)]
 struct Args {
+    /// Subcommand to run.
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Save your Todoist API token locally.
     Auth {
+        /// Todoist API token.
+        ///
+        /// Generate one from Todoist settings and pass it as plain text:
+        /// `todo auth <token>`.
         #[arg(required = true)]
         token: String,
     },
 
+    /// List tasks with optional filters.
     #[command(name = "list", alias = "l", alias = "get", alias = "g")]
     List {
+        /// Raw Todoist query string.
+        ///
+        /// This is passed directly as `query` to the Todoist filter endpoint.
+        /// Cannot be used with the structured filter flags below.
         #[arg(short = 'f', long = "filter", conflicts_with_all = &["search", "project", "due", "before", "after", "overdue", "today", "tomorrow", "week", "recurring"])]
         filter: Option<String>,
 
+        /// Maximum number of tasks to fetch.
+        ///
+        /// Defaults to 25 when omitted.
         #[arg(short = 'l', long = "limit")]
         limit: Option<i32>,
 
+        /// Full-text search term.
         #[arg(short = 's', long = "search")]
         search: Option<String>,
 
+        /// Project name used in filter queries.
+        ///
+        /// The value is translated to `##<project>`.
         #[arg(short = 'p', long = "project")]
         project: Option<String>,
 
+        /// Natural-language due date filter (for example: "today", "next Friday").
         #[arg(short = 'd', long = "due", conflicts_with_all = &["today", "tomorrow", "week", "month", "year"])]
         due: Option<String>,
 
+        /// Show tasks due before this date expression.
         #[arg(short = 'b', long = "before")]
         before: Option<String>,
 
+        /// Show tasks due after this date expression.
         #[arg(short = 'a', long = "after")]
         after: Option<String>,
 
+        /// Filter by priority (1-4).
         #[arg(short = 'P', long = "priority")]
         priority: Option<String>,
 
+        /// Include only overdue tasks.
         #[arg(short = 'o', long = "overdue")]
         overdue: bool,
 
+        /// Include tasks due today.
         #[arg(short = 't', long = "today", conflicts_with_all = &["due", "tomorrow", "week", "month", "year"])]
         today: bool,
 
+        /// Include tasks due tomorrow.
         #[arg(short = 'T', long = "tomorrow", conflicts_with_all = &["due", "today", "week", "month", "year"])]
         tomorrow: bool,
 
+        /// Include tasks due before next week.
         #[arg(short = 'w', long = "week", conflicts_with_all = &["due", "today", "tomorrow", "month", "year"])]
         week: bool,
 
+        /// Include tasks due before next month.
         #[arg(short = 'm', long = "month", conflicts_with_all = &["due", "today", "tomorrow", "week", "year"])]
         month: bool,
 
+        /// Include tasks due before next year.
         #[arg(short = 'y', long = "year", conflicts_with_all = &["due", "today", "tomorrow", "week", "month"])]
         year: bool,
 
+        /// Include only recurring tasks.
         #[arg(short = 'r', long = "recurring")]
         recurring: bool,
     },
 
+    /// Add a new task.
     #[command(name = "add", alias = "a")]
     Add {
+        /// Task title/content.
         content: String,
 
+        /// Project name.
+        ///
+        /// Note: currently recognized but not implemented.
         #[arg(short = 'p', long = "project")]
         project: Option<String>,
 
+        /// Optional task description.
         #[arg(short = 'D', long = "description")]
         description: Option<String>,
 
+        /// Natural-language due date string.
         #[arg(short = 'd', long = "due", conflicts_with_all = &["today", "tomorrow", "week", "month", "year"])]
         due: Option<String>,
 
+        /// Task priority (1-4).
         #[arg(short = 'P', long = "priority")]
         priority: Option<String>,
 
+        /// Set due date to today.
         #[arg(short = 't', long = "today", conflicts_with_all = &["due", "tomorrow", "week", "month", "year"])]
         today: bool,
 
+        /// Set due date to tomorrow.
         #[arg(short = 'T', long = "tomorrow", conflicts_with_all = &["due", "today", "week", "month", "year"])]
         tomorrow: bool,
 
+        /// Set due date to one week from now.
         #[arg(short = 'w', long = "week", conflicts_with_all = &["due", "today", "tomorrow", "month", "year"])]
         week: bool,
 
+        /// Set due date to one month from now.
         #[arg(short = 'm', long = "month", conflicts_with_all = &["due", "today", "tomorrow", "week", "year"])]
         month: bool,
 
+        /// Set due date to one year from now.
         #[arg(short = 'y', long = "year", conflicts_with_all = &["due", "today", "tomorrow", "week", "month"])]
         year: bool,
     },
 
+    /// Complete a task by list index.
+    ///
+    /// The index comes from the most recent `todo list` output.
     #[command(name = "check", alias = "c")]
     Check { id: usize },
 
+    /// Reopen a completed task by list index.
+    ///
+    /// The index comes from the most recent `todo list` output.
     #[command(name = "uncheck", alias = "u")]
     Uncheck { id: usize },
 
+    /// Delete a task by list index.
+    ///
+    /// The index comes from the most recent `todo list` output.
     #[command(name = "delete", alias = "d")]
     Delete { id: usize },
     // #[command(name = "projects", alias = "p")]
