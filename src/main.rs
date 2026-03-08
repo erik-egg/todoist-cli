@@ -198,7 +198,7 @@ fn main() {
             };
 
             // parse inputs
-            let limit = limit.unwrap_or(50);
+            let limit = limit.unwrap_or(25);
             let filter = filter.or_else(|| {
                 let mut filters = Vec::new();
                 if let Some(search) = search {
@@ -291,8 +291,8 @@ fn main() {
                 .as_array()
                 .map_or(empty_tasks, Vec::as_slice);
 
-            println!("{:<4}| {:<50} | Due Date", "ID", "Content - Description");
-            println!("{}", "-".repeat(73));
+            println!("{:<4}| {:<75} | Due Date", "ID", "Content - Description");
+            println!("{}", "-".repeat(100));
 
             for task in tasks {
                 // output line construction
@@ -324,7 +324,7 @@ fn main() {
                     due_line.push('🔁');
                 }
 
-                let line = format!("{content_description:<50} | {due_line:<12}");
+                let line = format!("{content_description:<75} | {due_line:<12}");
 
                 ordered.push((
                     due,
