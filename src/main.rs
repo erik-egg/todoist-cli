@@ -1,7 +1,11 @@
 mod sync;
 
 use clap::{Parser, Subcommand};
-use reqwest::{Method, Url, blocking::Client, header::HeaderMap};
+use reqwest::{
+    Method, Url,
+    blocking::{Client, Response},
+    header::HeaderMap,
+};
 use serde_json::Value;
 
 #[derive(Parser, Debug)]
@@ -217,6 +221,14 @@ fn update_task(id: usize, method: Method, action_path: &str, success_message: &s
     println!("{success_message}");
 }
 
+fn validate_response(body: &Response) -> anyhow::Result<()> {
+    let status = body.status();
+    if !status.is_success() {
+        return Err(anyhow::anyhow!("API request failed with status: {status}"));
+    }
+    Ok(())
+}
+
 fn main() {
     let args = Args::parse();
     match args.command {
@@ -323,13 +335,21 @@ fn main() {
                 }
             }
 
-            let body = Client::new()
-                .get(url)
-                .headers(headers)
+            let response = Client::new()
+                .get(url.clone())
+                .headers(headers.clone())
                 .send()
-                .unwrap()
-                .json::<Value>()
                 .unwrap();
+
+            match validate_response(&response) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("API Error: {e}");
+                    return;
+                }
+            }
+
+            let body = response.json::<Value>().unwrap();
 
             // dbg!(&body);
 
@@ -462,13 +482,17 @@ fn main() {
                 }
             }
 
-            let body = Client::new()
-                .post(url)
-                .headers(headers)
-                .send()
-                .unwrap()
-                .json::<Value>()
-                .unwrap();
+            let response = Client::new().post(url).headers(headers).send().unwrap();
+
+            match validate_response(&response) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("API Error: {e}");
+                    return;
+                }
+            }
+
+            let body = response.json::<Value>().unwrap();
 
             // dbg!(&body);
 
