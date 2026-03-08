@@ -1,5 +1,6 @@
 mod sync;
 
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use reqwest::{
     Method, Url,
@@ -171,9 +172,9 @@ enum Commands {
     // Projects {},
 }
 
-fn auth_headers() -> Result<HeaderMap, String> {
+fn auth_headers() -> Result<HeaderMap> {
     let token = sync::get_token()
-        .map_err(|e| format!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`"))?;
+        .map_err(|e| anyhow!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`"))?;
 
     let mut headers = HeaderMap::new();
     headers.insert("Authorization", format!("Bearer {token}").parse().unwrap());
@@ -181,32 +182,30 @@ fn auth_headers() -> Result<HeaderMap, String> {
     Ok(headers)
 }
 
-fn resolve_task_id(id: usize) -> Result<String, String> {
+fn resolve_task_id(id: usize) -> Result<String> {
     let list = sync::get_list("task_ids.txt").map_err(|e| {
-        format!("No task list found: {e}\nPlease run `todo list` first to generate the task list.")
+        anyhow!("No task list found: {e}\nPlease run `todo list` first to generate the task list.")
     })?;
 
     list.get(id).cloned().ok_or_else(|| {
-        format!(
+        anyhow!(
             "Task ID not found in list: {id}\nPlease ensure you are using a valid task ID from the most recent `todo list` output."
         )
     })
 }
 
-fn update_task(id: usize, method: Method, action_path: &str, success_message: &str) {
+fn update_task(id: usize, method: Method, action_path: &str, success_message: &str) -> Result<()> {
     let headers = match auth_headers() {
         Ok(headers) => headers,
         Err(error) => {
-            eprintln!("{error}");
-            return;
+            return Err(anyhow!("{error}"));
         }
     };
 
     let task_id = match resolve_task_id(id) {
         Ok(task_id) => task_id,
         Err(error) => {
-            eprintln!("{error}");
-            return;
+            return Err(anyhow!("{error}"));
         }
     };
 
@@ -219,22 +218,23 @@ fn update_task(id: usize, method: Method, action_path: &str, success_message: &s
         .unwrap();
 
     println!("{success_message}");
+    Ok(())
 }
 
-fn validate_response(body: &Response) -> anyhow::Result<()> {
+fn validate_response(body: &Response) -> Result<()> {
     let status = body.status();
     if !status.is_success() {
-        return Err(anyhow::anyhow!("API request failed with status: {status}"));
+        return Err(anyhow!("API request failed with status: {status}"));
     }
     Ok(())
 }
 
-fn main() {
+fn main() -> Result<()> {
     let args = Args::parse();
     match args.command {
         Commands::Auth { token } => {
             if let Err(e) = sync::save_token(&token) {
-                eprintln!("Error saving token: {e}");
+                return Err(anyhow!("Error saving token: {e}"));
             } else {
                 println!("Successfully saved token.");
             }
@@ -260,8 +260,7 @@ fn main() {
             let headers = match auth_headers() {
                 Ok(headers) => headers,
                 Err(error) => {
-                    eprintln!("{error}");
-                    return;
+                    return Err(anyhow!("{error}"));
                 }
             };
 
@@ -344,8 +343,7 @@ fn main() {
             match validate_response(&response) {
                 Ok(()) => {}
                 Err(e) => {
-                    eprintln!("API Error: {e}");
-                    return;
+                    return Err(anyhow!("{e}"));
                 }
             }
 
@@ -354,8 +352,7 @@ fn main() {
             // dbg!(&body);
 
             if let Some(error) = body["error"].as_str() {
-                eprintln!("API Error: {error}");
-                return;
+                return Err(anyhow!("API Error: {error}"));
             }
 
             let today = chrono::Local::now().date_naive();
@@ -437,8 +434,7 @@ fn main() {
             let headers = match auth_headers() {
                 Ok(headers) => headers,
                 Err(error) => {
-                    eprintln!("{error}");
-                    return;
+                    return Err(anyhow!("{error}"));
                 }
             };
 
@@ -487,8 +483,7 @@ fn main() {
             match validate_response(&response) {
                 Ok(()) => {}
                 Err(e) => {
-                    eprintln!("API Error: {e}");
-                    return;
+                    return Err(anyhow!("API Error: {e}"));
                 }
             }
 
@@ -497,8 +492,7 @@ fn main() {
             // dbg!(&body);
 
             if let Some(error) = body["error"].as_str() {
-                eprintln!("API Error: {error}");
-                return;
+                return Err(anyhow!("API Error: {error}"));
             }
 
             let content = body["content"].as_str().unwrap_or_default();
@@ -518,21 +512,23 @@ fn main() {
             println!("0  | {content_description} (due: {task_due}{recurring_marker})");
 
             let list = vec![body["id"].as_str().unwrap_or_default().to_owned()];
-            sync::save_list(&list, "task_ids.txt").unwrap();
+            sync::save_list(&list, "task_ids.txt")?;
         }
 
         Commands::Check { id } => {
-            update_task(id, Method::POST, "/close", "Task closed successfully.");
+            update_task(id, Method::POST, "/close", "Task closed successfully.")?;
         }
 
         Commands::Uncheck { id } => {
-            update_task(id, Method::POST, "/reopen", "Task reopened successfully.");
+            update_task(id, Method::POST, "/reopen", "Task reopened successfully.")?;
         }
 
         Commands::Delete { id } => {
-            update_task(id, Method::DELETE, "", "Task deleted successfully.");
+            update_task(id, Method::DELETE, "", "Task deleted successfully.")?;
         } // Commands::Projects {} => {
           //     todo!("Project listing not implemented yet.");
           // }
     }
+
+    Ok(())
 }
