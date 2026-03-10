@@ -1,7 +1,12 @@
 mod sync;
 
+#[cfg(test)]
+mod tests;
+
 use anyhow::{Result, anyhow};
+use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
+use colored::{ColoredString, Colorize};
 use reqwest::{
     Method, Url,
     blocking::{Client, Response},
@@ -38,11 +43,10 @@ enum Commands {
     /// List tasks with optional filters.
     #[command(name = "list", alias = "l", alias = "get", alias = "g")]
     List {
-        /// Raw Todoist query string.
+        /// Raw Todoist filter string like outlined here: `<https://www.todoist.com/help/articles/introduction-to-filters-V98wIH>`
         ///
-        /// This is passed directly as `query` to the Todoist filter endpoint.
-        /// Cannot be used with the structured filter flags below.
-        #[arg(short = 'f', long = "filter", conflicts_with_all = &["search", "project", "due", "before", "after", "overdue", "today", "tomorrow", "week", "recurring"])]
+        /// Alternatively you can also use the more user-friendly filter components below that will be combined into a filter string with AND logic.
+        #[arg(conflicts_with_all = &["search", "project", "due", "before", "after", "overdue", "today", "tomorrow", "week", "recurring"])]
         filter: Option<String>,
 
         /// Maximum number of tasks to fetch.
@@ -121,7 +125,7 @@ enum Commands {
         /// - a description starting from // until the end of the text.
         content: String,
 
-        /// A natural language due date to set for the task.
+        /// A natural language reminder to set for the task.
         #[arg(short = 'r', long = "reminder")]
         reminder: Option<String>,
     },
@@ -204,15 +208,82 @@ fn validate_response(body: &Response) -> Result<()> {
     Ok(())
 }
 
+fn string_to_date(date_str: &str) -> Option<chrono::NaiveDateTime> {
+    // If the string includes time, parse it as NaiveDateTime
+    if let Ok(date_time) = chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%dT%H:%M:%SZ") {
+        return Some(date_time);
+    }
+
+    // Alternatively, try parsing with just date (time defaults to 00:00:00)
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+        return date.and_hms_opt(0, 0, 0);
+    }
+
+    None
+}
+
+fn opt_date_to_display(date: Option<NaiveDateTime>) -> ColoredString {
+    if date.is_none() {
+        return ColoredString::default();
+    }
+    let date = date.unwrap();
+
+    let today = chrono::Local::now().date_naive();
+
+    // if yesterday, show "Yesterday HH:MM" if time is included, otherwise just "Yesterday"
+    if date.date() == today - chrono::Duration::days(1) {
+        if date.time() != chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+            return date.format("Yesterday %H:%M").to_string().red();
+        }
+        return "Yesterday".red();
+    }
+
+    // if today, show "Today HH:MM" if time is included, otherwise just "Today"
+    if date.date() == today {
+        if date.time() != chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+            return date.format("Today %H:%M").to_string().green();
+        }
+        return "Today".green();
+    }
+
+    // if tomorrow, show "Tomorrow HH:MM" if time is included, otherwise just "Tomorrow"
+    if date.date() == today + chrono::Duration::days(1) {
+        if date.time() != chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+            return date.format("Tomorrow %H:%M").to_string().yellow();
+        }
+        return "Tomorrow".yellow();
+    }
+
+    // if within the next week show "Weekday HH:MM" if time is included, otherwise just "Weekday"
+    if date.date() > today && date.date() <= today + chrono::Duration::days(7) {
+        if date.time() != chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+            return date.format("%A %H:%M").to_string().purple();
+        }
+        return date.format("%A").to_string().purple();
+    }
+
+    // default to "YYYY-MM-DD HH:MM" if time is included, otherwise just "YYYY-MM-DD"
+    let string = if date.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+        date.format("%Y-%m-%d").to_string()
+    } else {
+        date.format("%Y-%m-%d %H:%M").to_string()
+    };
+
+    if date < today.into() {
+        string.red()
+    } else {
+        string.normal()
+    }
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     match args.command {
         Commands::Auth { token } => {
             if let Err(e) = sync::save_token(&token) {
                 return Err(anyhow!("Error saving token: {e}"));
-            } else {
-                println!("Successfully saved token.");
             }
+            println!("Successfully saved token.");
         }
 
         Commands::List {
@@ -239,7 +310,7 @@ fn main() -> Result<()> {
                 }
             };
 
-            // parse inputs
+            // parse input filters
             let limit = limit.unwrap_or(25);
             let filter = filter.or_else(|| {
                 let mut filters = Vec::new();
@@ -292,6 +363,7 @@ fn main() -> Result<()> {
 
             // dbg!(&filter);
 
+            // construct request
             let api_link = if filter.is_none() {
                 // dbg!("no filter, using tasks endpoint");
                 "https://api.todoist.com/api/v1/tasks"
@@ -326,14 +398,17 @@ fn main() -> Result<()> {
 
             // dbg!(&body);
 
-            if let Some(error) = body["error"].as_str() {
-                return Err(anyhow!("API Error: {error}"));
-            }
+            let today = chrono::Local::now()
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            let fallback_due = chrono::NaiveDate::from_ymd_opt(22222, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
 
-            let today = chrono::Local::now().date_naive();
-            let fallback_due = chrono::NaiveDate::from_ymd_opt(2222, 1, 1).unwrap();
+            let mut ordered_todos = Vec::new();
 
-            let mut ordered = Vec::new();
             let empty_tasks: &[Value] = &[];
             let tasks = body["results"]
                 .as_array()
@@ -344,7 +419,6 @@ fn main() -> Result<()> {
 
             for task in tasks {
                 // output line construction
-
                 let content = task["content"].as_str().unwrap_or_default();
                 let description = task["description"].as_str().unwrap_or_default();
                 let task_due = task["due"]["date"].as_str().unwrap_or("none");
@@ -359,34 +433,41 @@ fn main() -> Result<()> {
                     content_description.push_str(description);
                 }
 
-                let mut due_line = task_due.to_owned();
+                let date = string_to_date(task_due);
 
-                let due =
-                    chrono::NaiveDate::parse_from_str(task_due, "%Y-%m-%d").unwrap_or(fallback_due);
+                let mut due_line = opt_date_to_display(date);
 
-                if due < today {
-                    due_line.push('⏰');
+                let mut date_for_ordering = date.unwrap_or(fallback_due);
+                if date_for_ordering.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+                    // if no time is included, use the end of the day for ordering to avoid putting tasks without time at the top of the list
+                    date_for_ordering += chrono::Duration::hours(23)
+                        + chrono::Duration::minutes(59)
+                        + chrono::Duration::seconds(59);
+                }
+
+                if date_for_ordering < today {
+                    due_line.input.push('⏰');
                 }
 
                 if is_recurring {
-                    due_line.push('🔁');
+                    due_line.input.push('🔁');
                 }
 
                 let line = format!("{content_description:<75} | {due_line:<12}");
 
-                ordered.push((
-                    due,
+                ordered_todos.push((
+                    date_for_ordering,
                     line,
                     task["id"].as_str().unwrap_or_default().to_owned(),
                 ));
             }
 
-            ordered.sort_by_key(|k| k.0);
-            for (idx, (_, line, _)) in ordered.iter().enumerate() {
+            ordered_todos.sort_by_key(|&(date, _, _)| date);
+            for (idx, (_, line, _)) in ordered_todos.iter().enumerate() {
                 println!("{idx:<4}| {line}");
             }
 
-            let list = ordered
+            let list = ordered_todos
                 .into_iter()
                 .map(|(_, _, id)| id)
                 .collect::<Vec<String>>();
