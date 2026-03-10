@@ -38,6 +38,10 @@ enum Commands {
         /// `todo auth <token>`.
         #[arg(required = true)]
         token: String,
+
+        #[arg(short = 'q', long = "quiet", default_value_t = false)]
+        /// Suppress output after saving the token.
+        quiet: bool,
     },
 
     /// List tasks with optional filters.
@@ -279,11 +283,13 @@ fn opt_date_to_display(date: Option<NaiveDateTime>) -> ColoredString {
 fn main() -> Result<()> {
     let args = Args::parse();
     match args.command {
-        Commands::Auth { token } => {
+        Commands::Auth { token, quiet } => {
             if let Err(e) = sync::save_token(&token) {
                 return Err(anyhow!("Error saving token: {e}"));
             }
-            println!("Successfully saved token.");
+            if !quiet {
+                println!("Successfully saved token.");
+            }
         }
 
         Commands::List {
