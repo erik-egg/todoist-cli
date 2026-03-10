@@ -160,59 +160,63 @@ fn auth_headers() -> Result<HeaderMap> {
         .map_err(|e| anyhow!("No Auth Token set: {e}\nPlease set it using `todo auth <token>`"))?;
 
     let mut headers = HeaderMap::new();
-    headers.insert("Authorization", format!("Bearer {token}").parse().unwrap());
+    headers.insert("Authorization", format!("Bearer {token}").parse()?);
 
     Ok(headers)
 }
 
-fn resolve_task_id(id: usize) -> Result<String> {
-    let list = sync::get_list("task_ids.txt").map_err(|e| {
+fn resolve_task_id_from_index(list_index: usize) -> Result<String> {
+    let task_ids = sync::get_list("task_ids.txt").map_err(|e| {
         anyhow!("No task list found: {e}\nPlease run `todo list` first to generate the task list.")
     })?;
 
-    list.get(id).cloned().ok_or_else(|| {
+    task_ids.get(list_index).cloned().ok_or_else(|| {
         anyhow!(
-            "Task ID not found in list: {id}\nPlease ensure you are using a valid task ID from the most recent `todo list` output."
+            "Task ID not found in list index: {list_index}\nPlease ensure you are using a valid task ID from the most recent `todo list` output."
         )
     })
 }
 
-fn update_task(id: usize, method: Method, action_path: &str, success_message: &str) -> Result<()> {
-    let headers = match auth_headers() {
+fn update_task_by_index(
+    list_index: usize,
+    method: Method,
+    action_suffix: &str,
+    success_message: &str,
+) -> Result<()> {
+    let auth_header_map = match auth_headers() {
         Ok(headers) => headers,
         Err(error) => {
             return Err(anyhow!("{error}"));
         }
     };
 
-    let task_id = match resolve_task_id(id) {
+    let task_id = match resolve_task_id_from_index(list_index) {
         Ok(task_id) => task_id,
         Err(error) => {
             return Err(anyhow!("{error}"));
         }
     };
 
-    let api_link = format!("https://api.todoist.com/api/v1/tasks/{task_id}{action_path}");
+    let api_url = format!("https://api.todoist.com/api/v1/tasks/{task_id}{action_suffix}");
 
-    let _body = Client::new()
-        .request(method, api_link)
-        .headers(headers)
-        .send()
-        .unwrap();
+    Client::new()
+        .request(method, api_url)
+        .headers(auth_header_map)
+        .send()?;
 
     println!("{success_message}");
     Ok(())
 }
 
-fn validate_response(body: &Response) -> Result<()> {
-    let status = body.status();
+fn validate_response_status(response: &Response) -> Result<()> {
+    let status = response.status();
     if !status.is_success() {
         return Err(anyhow!("API request failed with status: {status}"));
     }
     Ok(())
 }
 
-fn string_to_date(date_str: &str) -> Option<chrono::NaiveDateTime> {
+fn parse_due_date(date_str: &str) -> Option<chrono::NaiveDateTime> {
     // If the string includes time, parse it as NaiveDateTime
     if let Ok(date_time) = chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%dT%H:%M:%SZ") {
         return Some(date_time);
@@ -226,11 +230,11 @@ fn string_to_date(date_str: &str) -> Option<chrono::NaiveDateTime> {
     None
 }
 
-fn opt_date_to_display(date: Option<NaiveDateTime>) -> ColoredString {
-    if date.is_none() {
-        return ColoredString::default();
-    }
-    let date = date.unwrap();
+fn format_due_date(date: Option<NaiveDateTime>) -> ColoredString {
+    let date = match date {
+        Some(date) => date,
+        None => return ColoredString::default(),
+    };
 
     let today = chrono::Local::now().date_naive();
 
@@ -267,17 +271,162 @@ fn opt_date_to_display(date: Option<NaiveDateTime>) -> ColoredString {
     }
 
     // default to "YYYY-MM-DD HH:MM" if time is included, otherwise just "YYYY-MM-DD"
-    let string = if date.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+    let formatted_due = if date.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
         date.format("%Y-%m-%d").to_string()
     } else {
         date.format("%Y-%m-%d %H:%M").to_string()
     };
 
     if date < today.into() {
-        string.red()
+        formatted_due.red()
     } else {
-        string.normal()
+        formatted_due.normal()
     }
+}
+
+fn display_sorted_tasks(body: &Value) -> Result<()> {
+    let mut sorted_tasks = Vec::new();
+
+    let empty_results: &[Value] = &[];
+    let task_results = body["results"]
+        .as_array()
+        .map_or(empty_results, Vec::as_slice);
+
+    let today_at_midnight = chrono::Local::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+
+    // use a far future date for tasks without a due date to sort them at the end of the list
+    let fallback_due_datetime = chrono::NaiveDate::from_ymd_opt(22222, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+
+    for task in task_results {
+        // output line construction
+        let content = task["content"].as_str().unwrap_or_default();
+        let description = task["description"].as_str().unwrap_or_default();
+        let task_due = task["due"]["date"].as_str().unwrap_or("none");
+        let is_recurring = task["due"]["is_recurring"].as_bool().unwrap_or(false);
+
+        let mut content_with_description = content.to_owned();
+
+        if !description.is_empty() {
+            if !content_with_description.is_empty() {
+                content_with_description.push_str(" - ");
+            }
+            content_with_description.push_str(description);
+        }
+
+        let parsed_due = parse_due_date(task_due);
+
+        let mut due_line = format_due_date(parsed_due);
+
+        let mut date_for_ordering = parsed_due.unwrap_or(fallback_due_datetime);
+        if date_for_ordering.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+            // if no time is included, use the end of the day for ordering to avoid putting tasks without time at the top of the list
+            date_for_ordering += chrono::Duration::hours(23)
+                + chrono::Duration::minutes(59)
+                + chrono::Duration::seconds(59);
+        }
+
+        if date_for_ordering < today_at_midnight {
+            due_line.input.push('⏰');
+        }
+
+        if is_recurring {
+            due_line.input.push('🔁');
+        }
+
+        let formatted_row = format!("{content_with_description:<75} | {due_line:<12}");
+
+        sorted_tasks.push((
+            date_for_ordering,
+            formatted_row,
+            task["id"].as_str().unwrap_or_default().to_owned(),
+        ));
+    }
+
+    sorted_tasks.sort_by_key(|&(date, _, _)| date);
+    for (idx, (_, row, _)) in sorted_tasks.iter().enumerate() {
+        println!("{idx:<4}| {row}");
+    }
+
+    let task_ids = sorted_tasks
+        .into_iter()
+        .map(|(_, _, id)| id)
+        .collect::<Vec<String>>();
+
+    sync::save_list(&task_ids, "task_ids.txt")?;
+    Ok(())
+}
+
+fn build_filter(
+    filter: Option<String>,
+    search: Option<String>,
+    project: Option<String>,
+    due: Option<String>,
+    before: Option<String>,
+    after: Option<String>,
+    priority: Option<String>,
+    overdue: bool,
+    today: bool,
+    tomorrow: bool,
+    week: bool,
+    month: bool,
+    year: bool,
+    recurring: bool,
+) -> Option<String> {
+    filter.or_else(|| {
+        let mut filters = Vec::new();
+
+        if let Some(search) = search {
+            filters.push(format!("search: {search}"));
+        }
+        if let Some(project) = project {
+            filters.push(format!("##{project}"));
+        }
+        if let Some(due) = due {
+            filters.push(format!("due: {due}"));
+        }
+        if let Some(before) = before {
+            filters.push(format!("due before: {before}"));
+        }
+        if let Some(after) = after {
+            filters.push(format!("due after: {after}"));
+        }
+        if let Some(priority) = priority {
+            filters.push(format!("p{priority}"));
+        }
+        if overdue {
+            filters.push(String::from("overdue"));
+        }
+        if today {
+            filters.push(String::from("due: today"));
+        }
+        if tomorrow {
+            filters.push(String::from("due: tomorrow"));
+        }
+        if week {
+            filters.push(String::from("due before: next week"));
+        }
+        if month {
+            filters.push(String::from("due before: next month"));
+        }
+        if year {
+            filters.push(String::from("due before: next year"));
+        }
+        if recurring {
+            filters.push(String::from("recurring"));
+        }
+
+        if filters.is_empty() {
+            None
+        } else {
+            Some(filters.join(" & "))
+        }
+    })
 }
 
 fn main() -> Result<()> {
@@ -309,7 +458,7 @@ fn main() -> Result<()> {
             year,
             recurring,
         } => {
-            let headers = match auth_headers() {
+            let auth_header_map = match auth_headers() {
                 Ok(headers) => headers,
                 Err(error) => {
                     return Err(anyhow!("{error}"));
@@ -317,181 +466,55 @@ fn main() -> Result<()> {
             };
 
             // parse input filters
-            let limit = limit.unwrap_or(25);
-            let filter = filter.or_else(|| {
-                let mut filters = Vec::new();
-                if let Some(search) = search {
-                    filters.push(format!("search: {search}"));
-                }
-                if let Some(project) = project {
-                    filters.push(format!("##{project}"));
-                }
-                if let Some(due) = due {
-                    filters.push(format!("due: {due}"));
-                }
-                if let Some(before) = before {
-                    filters.push(format!("due before: {before}"));
-                }
-                if let Some(after) = after {
-                    filters.push(format!("due after: {after}"));
-                }
-                if let Some(priority) = priority {
-                    filters.push(format!("p{priority}"));
-                }
-                if overdue {
-                    filters.push(String::from("overdue"));
-                }
-                if today {
-                    filters.push(String::from("due: today"));
-                }
-                if tomorrow {
-                    filters.push(String::from("due: tomorrow"));
-                }
-                if week {
-                    filters.push(String::from("due before: next week"));
-                }
-                if month {
-                    filters.push(String::from("due before: next month"));
-                }
-                if year {
-                    filters.push(String::from("due before: next year"));
-                }
-                if recurring {
-                    filters.push(String::from("recurring"));
-                }
-
-                if filters.is_empty() {
-                    None
-                } else {
-                    Some(filters.join(" & "))
-                }
-            });
-
-            // dbg!(&filter);
+            let task_limit = limit.unwrap_or(25);
+            let filter_query = build_filter(
+                filter, search, project, due, before, after, priority, overdue, today, tomorrow,
+                week, month, year, recurring,
+            );
 
             // construct request
-            let api_link = if filter.is_none() {
-                // dbg!("no filter, using tasks endpoint");
+            let api_endpoint = if filter_query.is_none() {
                 "https://api.todoist.com/api/v1/tasks"
             } else {
-                // dbg!("filter provided, using filter endpoint");
                 "https://api.todoist.com/api/v1/tasks/filter"
             };
 
-            let mut url = Url::parse(api_link).unwrap();
+            let mut url = Url::parse(api_endpoint)?;
             {
                 let mut query = url.query_pairs_mut();
-                query.append_pair("limit", &limit.to_string());
-                if let Some(filter) = filter {
-                    query.append_pair("query", &filter);
+                query.append_pair("limit", &task_limit.to_string());
+
+                if let Some(filter_query) = filter_query {
+                    query.append_pair("query", &filter_query);
                 }
             }
 
-            let response = Client::new()
+            let http_response = Client::new()
                 .get(url.clone())
-                .headers(headers.clone())
-                .send()
-                .unwrap();
+                .headers(auth_header_map.clone())
+                .send()?;
 
-            match validate_response(&response) {
-                Ok(()) => {}
-                Err(e) => {
-                    return Err(anyhow!("{e}"));
-                }
-            }
+            validate_response_status(&http_response)?;
 
-            let body = response.json::<Value>().unwrap();
-
-            // dbg!(&body);
-
-            let today = chrono::Local::now()
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .unwrap();
-            let fallback_due = chrono::NaiveDate::from_ymd_opt(22222, 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap();
-
-            let mut ordered_todos = Vec::new();
-
-            let empty_tasks: &[Value] = &[];
-            let tasks = body["results"]
-                .as_array()
-                .map_or(empty_tasks, Vec::as_slice);
+            let response_body = http_response.json::<Value>()?;
 
             println!("{:<4}| {:<75} | Due Date", "ID", "Content - Description");
             println!("{}", "-".repeat(100));
 
-            for task in tasks {
-                // output line construction
-                let content = task["content"].as_str().unwrap_or_default();
-                let description = task["description"].as_str().unwrap_or_default();
-                let task_due = task["due"]["date"].as_str().unwrap_or("none");
-                let is_recurring = task["due"]["is_recurring"].as_bool().unwrap_or(false);
-
-                let mut content_description = content.to_owned();
-
-                if !description.is_empty() {
-                    if !content_description.is_empty() {
-                        content_description.push_str(" - ");
-                    }
-                    content_description.push_str(description);
-                }
-
-                let date = string_to_date(task_due);
-
-                let mut due_line = opt_date_to_display(date);
-
-                let mut date_for_ordering = date.unwrap_or(fallback_due);
-                if date_for_ordering.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
-                    // if no time is included, use the end of the day for ordering to avoid putting tasks without time at the top of the list
-                    date_for_ordering += chrono::Duration::hours(23)
-                        + chrono::Duration::minutes(59)
-                        + chrono::Duration::seconds(59);
-                }
-
-                if date_for_ordering < today {
-                    due_line.input.push('⏰');
-                }
-
-                if is_recurring {
-                    due_line.input.push('🔁');
-                }
-
-                let line = format!("{content_description:<75} | {due_line:<12}");
-
-                ordered_todos.push((
-                    date_for_ordering,
-                    line,
-                    task["id"].as_str().unwrap_or_default().to_owned(),
-                ));
-            }
-
-            ordered_todos.sort_by_key(|&(date, _, _)| date);
-            for (idx, (_, line, _)) in ordered_todos.iter().enumerate() {
-                println!("{idx:<4}| {line}");
-            }
-
-            let list = ordered_todos
-                .into_iter()
-                .map(|(_, _, id)| id)
-                .collect::<Vec<String>>();
-
-            sync::save_list(&list, "task_ids.txt").unwrap();
+            display_sorted_tasks(&response_body)?;
         }
 
         Commands::Add { content, reminder } => {
-            let headers = match auth_headers() {
+            let auth_header_map = match auth_headers() {
                 Ok(headers) => headers,
                 Err(error) => {
                     return Err(anyhow!("{error}"));
                 }
             };
 
-            let api_link = "https://api.todoist.com/api/v1/tasks/quick";
+            let api_endpoint = "https://api.todoist.com/api/v1/tasks/quick";
 
-            let mut url = Url::parse(api_link).unwrap();
+            let mut url = Url::parse(api_endpoint)?;
             {
                 let mut query = url.query_pairs_mut();
                 query.append_pair("text", &content);
@@ -500,57 +523,59 @@ fn main() -> Result<()> {
                 }
             }
 
-            let response = Client::new()
+            let http_response = Client::new()
                 .post(url.clone())
-                .headers(headers.clone())
-                .send()
-                .unwrap();
+                .headers(auth_header_map.clone())
+                .send()?;
 
-            match validate_response(&response) {
+            match validate_response_status(&http_response) {
                 Ok(()) => {}
                 Err(e) => {
                     return Err(anyhow!("API Error: {e}"));
                 }
             }
 
-            let body = response.json::<Value>().unwrap();
+            let response_body = http_response.json::<Value>()?;
 
             // dbg!(&body);
 
-            if let Some(error) = body["error"].as_str() {
+            if let Some(error) = response_body["error"].as_str() {
                 return Err(anyhow!("API Error: {error}"));
             }
 
-            let content = body["content"].as_str().unwrap_or_default();
-            let description = body["description"].as_str().unwrap_or_default();
-            let task_due = body["due"]["date"].as_str().unwrap_or("none");
-            let is_recurring = body["due"]["is_recurring"].as_bool().unwrap_or(false);
+            let created_task_content = response_body["content"].as_str().unwrap_or_default();
+            let created_task_description =
+                response_body["description"].as_str().unwrap_or_default();
+            let due_text = response_body["due"]["date"].as_str().unwrap_or("none");
+            let is_recurring = response_body["due"]["is_recurring"]
+                .as_bool()
+                .unwrap_or(false);
 
-            let mut content_description = content.to_owned();
-            if !description.is_empty() {
-                if !content_description.is_empty() {
-                    content_description.push_str(" - ");
+            let mut content_with_description = created_task_content.to_owned();
+            if !created_task_description.is_empty() {
+                if !content_with_description.is_empty() {
+                    content_with_description.push_str(" - ");
                 }
-                content_description.push_str(description);
+                content_with_description.push_str(created_task_description);
             }
 
             let recurring_marker = if is_recurring { " 🔁" } else { "" };
-            println!("0  | {content_description} (due: {task_due}{recurring_marker})");
+            println!("0  | {content_with_description} (due: {due_text}{recurring_marker})");
 
-            let list = vec![body["id"].as_str().unwrap_or_default().to_owned()];
-            sync::save_list(&list, "task_ids.txt")?;
+            let task_ids = vec![response_body["id"].as_str().unwrap_or_default().to_owned()];
+            sync::save_list(&task_ids, "task_ids.txt")?;
         }
 
         Commands::Check { id } => {
-            update_task(id, Method::POST, "/close", "Task closed successfully.")?;
+            update_task_by_index(id, Method::POST, "/close", "Task closed successfully.")?;
         }
 
         Commands::Uncheck { id } => {
-            update_task(id, Method::POST, "/reopen", "Task reopened successfully.")?;
+            update_task_by_index(id, Method::POST, "/reopen", "Task reopened successfully.")?;
         }
 
         Commands::Delete { id } => {
-            update_task(id, Method::DELETE, "", "Task deleted successfully.")?;
+            update_task_by_index(id, Method::DELETE, "", "Task deleted successfully.")?;
         } // Commands::Projects {} => {
           //     todo!("Project listing not implemented yet.");
           // }
