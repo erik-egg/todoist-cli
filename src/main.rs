@@ -109,46 +109,21 @@ enum Commands {
     /// Add a new task.
     #[command(name = "add", alias = "a")]
     Add {
-        /// Task title/content.
+        /// The text of the task that is parsed.
+        ///
+        /// It can include:
+        /// - a due date in free form text
+        /// - a project name starting with the # character (without spaces)
+        /// - a label starting with the @ character
+        /// - an assignee starting with the + character
+        /// - a priority (e.g., p1)
+        /// - a deadline between {} (e.g. {in 3 days})
+        /// - a description starting from // until the end of the text.
         content: String,
 
-        /// Project name.
-        ///
-        /// Note: currently recognized but not implemented.
-        #[arg(short = 'p', long = "project")]
-        project: Option<String>,
-
-        /// Optional task description.
-        #[arg(short = 'D', long = "description")]
-        description: Option<String>,
-
-        /// Natural-language due date string.
-        #[arg(short = 'd', long = "due", conflicts_with_all = &["today", "tomorrow", "week", "month", "year"])]
-        due: Option<String>,
-
-        /// Task priority (1-4).
-        #[arg(short = 'P', long = "priority")]
-        priority: Option<String>,
-
-        /// Set due date to today.
-        #[arg(short = 't', long = "today", conflicts_with_all = &["due", "tomorrow", "week", "month", "year"])]
-        today: bool,
-
-        /// Set due date to tomorrow.
-        #[arg(short = 'T', long = "tomorrow", conflicts_with_all = &["due", "today", "week", "month", "year"])]
-        tomorrow: bool,
-
-        /// Set due date to one week from now.
-        #[arg(short = 'w', long = "week", conflicts_with_all = &["due", "today", "tomorrow", "month", "year"])]
-        week: bool,
-
-        /// Set due date to one month from now.
-        #[arg(short = 'm', long = "month", conflicts_with_all = &["due", "today", "tomorrow", "week", "year"])]
-        month: bool,
-
-        /// Set due date to one year from now.
-        #[arg(short = 'y', long = "year", conflicts_with_all = &["due", "today", "tomorrow", "week", "month"])]
-        year: bool,
+        /// A natural language due date to set for the task.
+        #[arg(short = 'r', long = "reminder")]
+        reminder: Option<String>,
     },
 
     /// Complete a task by list index.
@@ -419,18 +394,7 @@ fn main() -> Result<()> {
             sync::save_list(&list, "task_ids.txt").unwrap();
         }
 
-        Commands::Add {
-            content,
-            project,
-            description,
-            due,
-            priority,
-            today,
-            tomorrow,
-            week,
-            month,
-            year,
-        } => {
+        Commands::Add { content, reminder } => {
             let headers = match auth_headers() {
                 Ok(headers) => headers,
                 Err(error) => {
@@ -438,47 +402,22 @@ fn main() -> Result<()> {
                 }
             };
 
-            // parse inputs
-            if project.is_some() {
-                todo!("project support not implemented yet");
-            }
-
-            let api_link = "https://api.todoist.com/api/v1/tasks";
+            let api_link = "https://api.todoist.com/api/v1/tasks/quick";
 
             let mut url = Url::parse(api_link).unwrap();
             {
                 let mut query = url.query_pairs_mut();
-                query.append_pair("content", &content);
-                // if let Some(project) = project {
-                //     query.append_pair("project_id", &project);
-                // }
-                if let Some(description) = description {
-                    query.append_pair("description", &description);
-                }
-                if let Some(due) = due {
-                    query.append_pair("due_string", &due);
-                }
-                if let Some(priority) = priority {
-                    query.append_pair("priority", &priority);
-                }
-                if today {
-                    query.append_pair("due_string", "today");
-                }
-                if tomorrow {
-                    query.append_pair("due_string", "tomorrow");
-                }
-                if week {
-                    query.append_pair("due_string", "in 7 days");
-                }
-                if month {
-                    query.append_pair("due_string", "in 1 month");
-                }
-                if year {
-                    query.append_pair("due_string", "in 1 year");
+                query.append_pair("text", &content);
+                if let Some(reminder) = reminder {
+                    query.append_pair("reminder", &reminder);
                 }
             }
 
-            let response = Client::new().post(url).headers(headers).send().unwrap();
+            let response = Client::new()
+                .post(url.clone())
+                .headers(headers.clone())
+                .send()
+                .unwrap();
 
             match validate_response(&response) {
                 Ok(()) => {}
