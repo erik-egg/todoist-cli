@@ -3,14 +3,14 @@ mod sync;
 #[cfg(test)]
 mod tests;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
 use colored::{ColoredString, Colorize};
 use reqwest::{
-    Method, Url,
     blocking::{Client, Response},
     header::HeaderMap,
+    Method, Url,
 };
 use serde_json::Value;
 
@@ -166,7 +166,7 @@ fn auth_headers() -> Result<HeaderMap> {
 }
 
 fn resolve_task_id_from_index(list_index: usize) -> Result<String> {
-    let task_ids = sync::get_list("task_ids.txt").map_err(|e| {
+    let task_ids = sync::get_task_ids().map_err(|e| {
         anyhow!("No task list found: {e}\nPlease run `todo list` first to generate the task list.")
     })?;
 
@@ -358,7 +358,7 @@ fn display_sorted_tasks(body: &Value) -> Result<()> {
         .map(|(_, _, id)| id)
         .collect::<Vec<String>>();
 
-    sync::save_list(&task_ids, "task_ids.txt")?;
+    sync::save_task_ids(&task_ids)?;
     Ok(())
 }
 
@@ -563,7 +563,7 @@ fn main() -> Result<()> {
             println!("0  | {content_with_description} (due: {due_text}{recurring_marker})");
 
             let task_ids = vec![response_body["id"].as_str().unwrap_or_default().to_owned()];
-            sync::save_list(&task_ids, "task_ids.txt")?;
+            sync::save_task_ids(&task_ids)?;
         }
 
         Commands::Check { id } => {

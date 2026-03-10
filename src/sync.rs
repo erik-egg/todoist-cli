@@ -1,58 +1,61 @@
 use anyhow::{Context, Result};
-use std::env;
+use directories::ProjectDirs;
+use keyring::Entry;
 use std::fs;
 use std::path::PathBuf;
 
-fn todoist_file_path() -> Result<PathBuf> {
-    let base_dir = if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
-        PathBuf::from(path)
-    } else {
-        let home = env::var_os("HOME").context("HOME is not set")?;
-        PathBuf::from(home).join(".config")
-    };
+const QUALIFIER: &str = "com";
+const ORGANIZATION: &str = "todo-cli";
+const APPLICATION: &str = "todo";
+const KEYCHAIN_SERVICE: &str = "todo-cli";
+const KEYCHAIN_ACCOUNT: &str = "todoist-api-token";
+const TASK_IDS_FILE: &str = "task_ids.txt";
 
-    Ok(base_dir.join("todoist"))
+fn app_cache_dir() -> Result<PathBuf> {
+    let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .context("failed to determine platform-specific app directories")?;
+
+    Ok(dirs.cache_dir().to_path_buf())
+}
+
+fn keychain_entry() -> Result<Entry> {
+    Ok(Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)?)
 }
 
 pub fn save_token(token: &str) -> Result<()> {
-    let parent = todoist_file_path()?;
-    let token_path = &parent.join("auth.txt");
-
-    fs::create_dir_all(&parent)
-        .with_context(|| format!("failed to create directory {}", parent.display()))?;
-    fs::write(token_path, token)
-        .with_context(|| format!("failed to write token file {}", token_path.display()))?;
+    let entry = keychain_entry()?;
+    entry
+        .set_password(token)
+        .context("failed to save token in OS keychain")?;
 
     Ok(())
 }
 
 pub fn get_token() -> Result<String> {
-    let token_path = todoist_file_path()?.join("auth.txt");
-    let token = fs::read_to_string(&token_path)
-        .with_context(|| format!("failed to read token file {}", token_path.display()))?;
+    let entry = keychain_entry()?;
+    let token = entry
+        .get_password()
+        .context("failed to read token from OS keychain")?;
 
     Ok(token.trim().to_owned())
 }
 
-pub fn save_list(list: &[String], file_name: &str) -> Result<()> {
-    let parent = todoist_file_path()?;
-    let list_path = &parent.join(file_name);
+pub fn save_task_ids(task_ids: &[String]) -> Result<()> {
+    let parent = app_cache_dir()?;
+    let task_ids_path = parent.join(TASK_IDS_FILE);
 
-    let to_write = list.join("\n");
     fs::create_dir_all(&parent)
         .with_context(|| format!("failed to create directory {}", parent.display()))?;
-    fs::write(list_path, to_write)
-        .with_context(|| format!("failed to write list file {}", list_path.display()))?;
+    fs::write(&task_ids_path, task_ids.join("\n"))
+        .with_context(|| format!("failed to write task list file {}", task_ids_path.display()))?;
 
     Ok(())
 }
 
-pub fn get_list(file_name: &str) -> Result<Vec<String>> {
-    let list_path = todoist_file_path()?.join(file_name);
-    let content = fs::read_to_string(&list_path)
-        .with_context(|| format!("failed to read list file {}", list_path.display()))?;
+pub fn get_task_ids() -> Result<Vec<String>> {
+    let task_ids_path = app_cache_dir()?.join(TASK_IDS_FILE);
+    let content = fs::read_to_string(&task_ids_path)
+        .with_context(|| format!("failed to read task list file {}", task_ids_path.display()))?;
 
-    let list = content.lines().map(str::to_owned).collect::<Vec<String>>();
-
-    Ok(list)
+    Ok(content.lines().map(str::to_owned).collect::<Vec<String>>())
 }
